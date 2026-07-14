@@ -1,8 +1,36 @@
 # shellcheck shell=bash
+print_usage() {
+    echo "网络延迟检测工具 - 使用说明"
+    echo ""
+    echo "用法: $0 [选项]"
+    echo ""
+    echo "选项:"
+    echo "  --output-file <path>     指定输出文件路径"
+    echo "  --no-output              禁用文件输出"
+    echo "  --single-result-page     生成单页结果（HTML/Markdown）"
+    echo "  --format <type>          输出格式: text/markdown/html/json"
+    echo "  --help, -h               显示此帮助信息"
+    echo ""
+}
+
+validate_output_format() {
+    case "$1" in
+        text|markdown|html|json) return 0 ;;
+        *)
+            echo "错误: 不支持的输出格式 '$1'，可选: text/markdown/html/json" >&2
+            exit 1
+            ;;
+    esac
+}
+
 parse_arguments() {
     while [[ $# -gt 0 ]]; do
         case $1 in
             --output-file)
+                if [[ $# -lt 2 || "$2" == --* ]]; then
+                    echo "错误: --output-file 需要路径参数" >&2
+                    exit 1
+                fi
                 OUTPUT_FILE="$2"
                 ENABLE_OUTPUT=true
                 # 根据文件扩展名自动检测格式
@@ -23,26 +51,21 @@ parse_arguments() {
                 shift
                 ;;
             --format)
+                if [[ $# -lt 2 || "$2" == --* ]]; then
+                    echo "错误: --format 需要格式参数: text/markdown/html/json" >&2
+                    exit 1
+                fi
+                validate_output_format "$2"
                 OUTPUT_FORMAT="$2"
                 shift 2
                 ;;
             --help|-h)
-                echo "网络延迟检测工具 - 使用说明"
-                echo ""
-                echo "用法: $0 [选项]"
-                echo ""
-                echo "选项:"
-                echo "  --output-file <path>     指定输出文件路径"
-                echo "  --no-output              禁用文件输出"
-                echo "  --single-result-page     生成单页结果（HTML/Markdown）"
-                echo "  --format <type>          输出格式: text/markdown/html/json"
-                echo "  --help, -h               显示此帮助信息"
-                echo ""
+                print_usage
                 exit 0
                 ;;
             *)
-                echo "未知参数: $1"
-                echo "使用 --help 查看帮助"
+                echo "未知参数: $1" >&2
+                echo "使用 --help 查看帮助" >&2
                 exit 1
                 ;;
         esac
