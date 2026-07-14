@@ -35,6 +35,8 @@ bash <(wget -qO- https://ba.sh/gZnH)
 
 ## 🔧 依赖安装
 
+`fping` 是快速批量测试使用的可选性能优化依赖；未安装时会跳过该加速阶段，后续测试自动回退到系统 `ping`，不会阻止启动。
+
 **macOS**
 ```bash
 brew install fping

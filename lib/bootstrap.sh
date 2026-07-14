@@ -84,7 +84,33 @@ get_timeout_cmd() {
 
 detect_os
 
-# 代理/VPN环境检测
+# 依赖检测辅助函数
+
+dependency_is_missing() {
+    local expected="$1"
+    shift
+
+    local dependency
+    for dependency in "$@"; do
+        if [[ "$dependency" == "$expected" ]]; then
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+run_package_command() {
+    local description="$1"
+    shift
+
+    if "$@" >/dev/null 2>&1; then
+        return 0
+    fi
+
+    echo -e "${YELLOW}⚠️  ${description}失败${NC}"
+    return 1
+}
 
 check_dependencies() {
     echo -e "${CYAN}🔧 检查系统依赖...${NC}"
@@ -136,7 +162,6 @@ check_dependencies() {
     # fping是可选的，但强烈推荐
     if ! command -v fping >/dev/null 2>&1; then
         echo -e "${YELLOW}💡 建议安装 fping 以获得更好的性能${NC}"
-        missing_deps+=("fping")
     fi
     
     # 如果有缺失的依赖，尝试自动安装
@@ -148,85 +173,70 @@ check_dependencies() {
             
             case $install_cmd in
                 "apt-get")
-                    apt-get update -qq >/dev/null 2>&1
-                    if echo "${missing_deps[*]}" | grep -q "ping"; then
-                        apt-get install -y iputils-ping >/dev/null 2>&1
+                    run_package_command "更新 APT 软件包索引" apt-get update -qq || true
+                    if dependency_is_missing "ping" "${missing_deps[@]}"; then
+                        run_package_command "安装 ping" apt-get install -y iputils-ping || true
                     fi
-                    if echo "${missing_deps[*]}" | grep -q "curl"; then
-                        apt-get install -y curl >/dev/null 2>&1
+                    if dependency_is_missing "curl" "${missing_deps[@]}"; then
+                        run_package_command "安装 curl" apt-get install -y curl || true
                     fi
-                    if echo "${missing_deps[*]}" | grep -q "bc"; then
-                        apt-get install -y bc >/dev/null 2>&1
+                    if dependency_is_missing "bc" "${missing_deps[@]}"; then
+                        run_package_command "安装 bc" apt-get install -y bc || true
                     fi
-                    if echo "${missing_deps[*]}" | grep -q "nslookup"; then
-                        apt-get install -y dnsutils >/dev/null 2>&1
-                    fi
-                    if echo "${missing_deps[*]}" | grep -q "fping"; then
-                        apt-get install -y fping >/dev/null 2>&1
+                    if dependency_is_missing "nslookup" "${missing_deps[@]}"; then
+                        run_package_command "安装 nslookup" apt-get install -y dnsutils || true
                     fi
                     ;;
                 "yum"|"dnf")
-                    if echo "${missing_deps[*]}" | grep -q "ping"; then
-                        $install_cmd install -y iputils >/dev/null 2>&1
+                    if dependency_is_missing "ping" "${missing_deps[@]}"; then
+                        run_package_command "安装 ping" "$install_cmd" install -y iputils || true
                     fi
-                    if echo "${missing_deps[*]}" | grep -q "curl"; then
-                        $install_cmd install -y curl >/dev/null 2>&1
+                    if dependency_is_missing "curl" "${missing_deps[@]}"; then
+                        run_package_command "安装 curl" "$install_cmd" install -y curl || true
                     fi
-                    if echo "${missing_deps[*]}" | grep -q "bc"; then
-                        $install_cmd install -y bc >/dev/null 2>&1
+                    if dependency_is_missing "bc" "${missing_deps[@]}"; then
+                        run_package_command "安装 bc" "$install_cmd" install -y bc || true
                     fi
-                    if echo "${missing_deps[*]}" | grep -q "nslookup"; then
-                        $install_cmd install -y bind-utils >/dev/null 2>&1
-                    fi
-                    if echo "${missing_deps[*]}" | grep -q "fping"; then
-                        $install_cmd install -y fping >/dev/null 2>&1
+                    if dependency_is_missing "nslookup" "${missing_deps[@]}"; then
+                        run_package_command "安装 nslookup" "$install_cmd" install -y bind-utils || true
                     fi
                     ;;
                 "apk")
-                    apk update >/dev/null 2>&1
-                    if echo "${missing_deps[*]}" | grep -q "ping"; then
-                        apk add iputils >/dev/null 2>&1
+                    run_package_command "更新 APK 软件包索引" apk update || true
+                    if dependency_is_missing "ping" "${missing_deps[@]}"; then
+                        run_package_command "安装 ping" apk add iputils || true
                     fi
-                    if echo "${missing_deps[*]}" | grep -q "curl"; then
-                        apk add curl >/dev/null 2>&1
+                    if dependency_is_missing "curl" "${missing_deps[@]}"; then
+                        run_package_command "安装 curl" apk add curl || true
                     fi
-                    if echo "${missing_deps[*]}" | grep -q "bc"; then
-                        apk add bc >/dev/null 2>&1
+                    if dependency_is_missing "bc" "${missing_deps[@]}"; then
+                        run_package_command "安装 bc" apk add bc || true
                     fi
-                    if echo "${missing_deps[*]}" | grep -q "nslookup"; then
-                        apk add bind-tools >/dev/null 2>&1
-                    fi
-                    if echo "${missing_deps[*]}" | grep -q "fping"; then
-                        apk add fping >/dev/null 2>&1
+                    if dependency_is_missing "nslookup" "${missing_deps[@]}"; then
+                        run_package_command "安装 nslookup" apk add bind-tools || true
                     fi
                     ;;
                 "brew")
-                    if echo "${missing_deps[*]}" | grep -q "curl"; then
-                        brew install curl >/dev/null 2>&1
+                    if dependency_is_missing "curl" "${missing_deps[@]}"; then
+                        run_package_command "安装 curl" brew install curl || true
                     fi
-                    if echo "${missing_deps[*]}" | grep -q "bc"; then
-                        brew install bc >/dev/null 2>&1
-                    fi
-                    if echo "${missing_deps[*]}" | grep -q "fping"; then
-                        brew install fping >/dev/null 2>&1
+                    if dependency_is_missing "bc" "${missing_deps[@]}"; then
+                        run_package_command "安装 bc" brew install bc || true
                     fi
                     # macOS通常已有ping和nslookup
                     ;;
                 "pacman")
-                    if echo "${missing_deps[*]}" | grep -q "ping"; then
-                        pacman -S --noconfirm iputils >/dev/null 2>&1
+                    if dependency_is_missing "ping" "${missing_deps[@]}"; then
+                        run_package_command "安装 ping" pacman -S --noconfirm iputils || true
                     fi
-                    if echo "${missing_deps[*]}" | grep -q "curl"; then
-                        pacman -S --noconfirm curl >/dev/null 2>&1
+                    if dependency_is_missing "curl" "${missing_deps[@]}"; then
+                        run_package_command "安装 curl" pacman -S --noconfirm curl || true
                     fi
-                    if echo "${missing_deps[*]}" | grep -q "bc"; then
-                        pacman -S --noconfirm bc >/dev/null 2>&1
+                    if dependency_is_missing "bc" "${missing_deps[@]}"; then
+                        run_package_command "安装 bc" pacman -S --noconfirm bc || true
                     fi
-                    if echo "${missing_deps[*]}" | grep -q "nslookup"; then
-                        pacman -S --noconfirm bind-tools >/dev/null 2>&1
-                    fi
-                    if echo "${missing_deps[*]}" | grep -q "fping"; then
-                        pacman -S --noconfirm fping >/dev/null 2>&1
+                    if dependency_is_missing "nslookup" "${missing_deps[@]}"; then
+                        run_package_command "安装 nslookup" pacman -S --noconfirm bind-tools || true
                     fi
                     ;;
             esac
@@ -255,11 +265,6 @@ check_dependencies() {
                             still_missing+=("nslookup")
                         fi
                         ;;
-                    "fping")
-                        if ! command -v fping >/dev/null 2>&1; then
-                            still_missing+=("fping")
-                        fi
-                        ;;
                 esac
             done
             
@@ -268,7 +273,7 @@ check_dependencies() {
             else
                 echo -e "${RED}❌ 部分依赖安装失败: ${still_missing[*]}${NC}"
                 show_manual_install_instructions
-                exit 1
+                return 1
             fi
             
         else
@@ -277,10 +282,10 @@ check_dependencies() {
                 echo -e "${YELLOW}💡 提示: 请使用 root 权限运行脚本以自动安装依赖${NC}"
             fi
             show_manual_install_instructions
-            exit 1
+            return 1
         fi
     else
-        echo -e "${GREEN}✅ 所有依赖已安装${NC}"
+        echo -e "${GREEN}✅ 所有必要依赖已安装${NC}"
     fi
     
     echo ""

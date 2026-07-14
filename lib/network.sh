@@ -32,6 +32,39 @@ get_ping_interval() {
     fi
 }
 
+ping_latency_summary() {
+    local host="$1"
+    local count="${2:-3}"
+    local version="${3:-4}"
+    local ping_cmd interval timeout_cmd ping_result avg_latency packet_loss
+
+    ping_cmd=$(get_ping_cmd "$version" "$host")
+    interval=$(get_ping_interval)
+    timeout_cmd=$(get_timeout_cmd)
+
+    if [[ -n "$timeout_cmd" ]]; then
+        if [[ -n "$interval" ]]; then
+            ping_result=$($timeout_cmd 10 $ping_cmd -c "$count" $interval "$host" 2>/dev/null || true)
+        else
+            ping_result=$($timeout_cmd 10 $ping_cmd -c "$count" "$host" 2>/dev/null || true)
+        fi
+    elif [[ -n "$interval" ]]; then
+        ping_result=$($ping_cmd -c "$count" $interval "$host" 2>/dev/null || true)
+    else
+        ping_result=$($ping_cmd -c "$count" "$host" 2>/dev/null || true)
+    fi
+
+    avg_latency=$(echo "$ping_result" | sed -n 's/.*= [0-9.]*\/\([0-9.]*\)\/.*/\1/p' | head -n1)
+    packet_loss=$(echo "$ping_result" | sed -n 's/.* \([0-9][0-9.]*\)% packet loss.*/\1/p' | head -n1)
+    packet_loss=${packet_loss%.*}
+
+    if [[ ! "$avg_latency" =~ ^[0-9]+\.?[0-9]*$ ]]; then
+        return 1
+    fi
+
+    printf '%s|%s\n' "$avg_latency" "${packet_loss:-0}"
+}
+
 # 获取超时命令
 
 detect_proxy() {
@@ -134,29 +167,12 @@ test_batch_latency_fping() {
     else
         # 如果没有fping，回退到标准ping
         while IFS= read -r host; do
-            local ping_cmd=$(get_ping_cmd "$IP_VERSION" "$host")
-            local interval=$(get_ping_interval)
-            local timeout_cmd=$(get_timeout_cmd)
-            
-            local ping_result
-            if [[ -n "$timeout_cmd" ]]; then
-                if [[ -n "$interval" ]]; then
-                    ping_result=$($timeout_cmd 10 $ping_cmd -c $PING_COUNT $interval "$host" 2>/dev/null || echo "timeout")
-                else
-                    ping_result=$($timeout_cmd 10 $ping_cmd -c $PING_COUNT "$host" 2>/dev/null || echo "timeout")
-                fi
-            else
-                # macOS没有timeout命令时，直接使用ping
-                if [[ -n "$interval" ]]; then
-                    ping_result=$($ping_cmd -c $PING_COUNT $interval "$host" 2>/dev/null || echo "timeout")
-                else
-                    ping_result=$($ping_cmd -c $PING_COUNT "$host" 2>/dev/null || echo "timeout")
-                fi
-            fi
-            
-            if [[ "$ping_result" != "timeout" ]]; then
-                local avg_latency=$(echo "$ping_result" | grep -o 'min/avg/max[^=]*= [0-9.]*\/[0-9.]*\/[0-9.]*' | cut -d'=' -f2 | cut -d'/' -f2 || echo "timeout")
-                echo "$host : $avg_latency ms" >> "$temp_results"
+            local summary avg_latency packet_loss
+            summary=$(ping_latency_summary "$host" "$PING_COUNT" "$IP_VERSION" || true)
+            IFS='|' read -r avg_latency packet_loss <<< "$summary"
+
+            if [[ -n "$avg_latency" ]]; then
+                echo "$host : $avg_latency ms, ${packet_loss:-0}% loss" >> "$temp_results"
             else
                 echo "$host : timeout" >> "$temp_results"
             fi
@@ -169,7 +185,7 @@ test_batch_latency_fping() {
     echo "$temp_results"
 }
 
-# 在fping阶段测试Telegram并缓存结果
+# 在快速 Ping 阶段测试 Telegram 并缓存结果
 
 test_telegram_in_fping() {
     # 检查Python环境
@@ -177,6 +193,7 @@ test_telegram_in_fping() {
         TELEGRAM_BEST_IP=""
         TELEGRAM_BEST_DC=""
         TELEGRAM_BEST_LATENCY="N/A"
+        TELEGRAM_BEST_LOSS="0%"
         return
     fi
     
@@ -210,6 +227,7 @@ PYTHON_EOF
         TELEGRAM_BEST_IP=""
         TELEGRAM_BEST_DC=""
         TELEGRAM_BEST_LATENCY="N/A"
+        TELEGRAM_BEST_LOSS="0%"
         return
     fi
     
@@ -228,10 +246,11 @@ PYTHON_EOF
         TELEGRAM_BEST_IP=""
         TELEGRAM_BEST_DC=""
         TELEGRAM_BEST_LATENCY="N/A"
+        TELEGRAM_BEST_LOSS="0%"
         return
     fi
     
-    # 使用fping批量测试
+    # 优先使用 fping；未安装时使用系统 ping。
     local best_ip=""
     local best_latency=999999
     local best_dc=""
@@ -274,6 +293,22 @@ PYTHON_EOF
                 fi
             fi
         done
+    else
+        local summary avg loss avg_int
+        for ip in "${ips[@]}"; do
+            summary=$(ping_latency_summary "$ip" 3 "4" || true)
+            IFS='|' read -r avg loss <<< "$summary"
+
+            if [[ "$avg" =~ ^[0-9]+\.?[0-9]*$ ]]; then
+                avg_int=${avg%.*}
+                if [[ $avg_int -lt $best_latency ]]; then
+                    best_latency=$avg_int
+                    best_ip="$ip"
+                    best_dc="${ip_to_dc[$ip]}"
+                    best_loss="${loss:-0}%"
+                fi
+            fi
+        done
     fi
     
     # 缓存结果
@@ -295,11 +330,18 @@ PYTHON_EOF
 show_fping_results() {
     echo ""
     echo -e "${BLUE}═══════════════════════════════════════════════════════════════${NC}"
-    echo -e "${CYAN}📡 快速Ping延迟测试 (使用fping批量测试)${NC}"
+    echo -e "${CYAN}📡 快速Ping延迟测试${NC}"
     echo -e "${BLUE}═══════════════════════════════════════════════════════════════${NC}"
     
     # 先测试Telegram获取最佳IP
     test_telegram_in_fping
+
+    if ! command -v fping >/dev/null 2>&1; then
+        echo -e "${YELLOW}💡 未安装 fping，跳过快速批量测试；后续真实连接测试将使用系统 ping${NC}"
+        echo ""
+        echo -e "${BLUE}═══════════════════════════════════════════════════════════════${NC}"
+        return
+    fi
     
     # 收集所有主机
     local hosts=()
